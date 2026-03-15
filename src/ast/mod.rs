@@ -2845,7 +2845,10 @@ pub enum Statement {
     /// DROP CONNECTOR
     /// ```
     /// See [Hive](https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=27362034#LanguageManualDDL-DropConnector)
-    DropConnector { if_exists: bool, name: Ident },
+    DropConnector {
+        if_exists: bool,
+        name: Ident,
+    },
     /// ```sql
     /// DECLARE
     /// ```
@@ -2853,7 +2856,9 @@ pub enum Statement {
     ///
     /// Note: this is a PostgreSQL-specific statement,
     /// but may also compatible with other SQL.
-    Declare { stmts: Vec<Declare> },
+    Declare {
+        stmts: Vec<Declare>,
+    },
     /// ```sql
     /// CREATE EXTENSION [ IF NOT EXISTS ] extension_name
     ///     [ WITH ] [ SCHEMA schema_name ]
@@ -2915,7 +2920,9 @@ pub enum Statement {
     ///
     /// Note: this is a PostgreSQL-specific statement,
     /// but may also compatible with other SQL.
-    Discard { object_type: DiscardObject },
+    Discard {
+        object_type: DiscardObject,
+    },
     /// ```sql
     /// SET [ SESSION | LOCAL ] ROLE role_name
     /// ```
@@ -2952,7 +2959,10 @@ pub enum Statement {
     ///
     /// Note: this is a PostgreSQL-specific statements
     /// `SET TIME ZONE <value>` is an alias for `SET timezone TO <value>` in PostgreSQL
-    SetTimeZone { local: bool, value: Expr },
+    SetTimeZone {
+        local: bool,
+        value: Expr,
+    },
     /// ```sql
     /// SET NAMES 'charset_name' [COLLATE 'collation_name']
     /// ```
@@ -2971,13 +2981,25 @@ pub enum Statement {
     /// `SHOW FUNCTIONS`
     ///
     /// Note: this is a Presto-specific statement.
-    ShowFunctions { filter: Option<ShowStatementFilter> },
+    ShowFunctions {
+        filter: Option<ShowStatementFilter>,
+    },
+    StartFunction {
+        #[cfg_attr(feature = "visitor", visit(with = "visit_relation"))]
+        name: ObjectName,
+    },
+    StopFunction {
+        #[cfg_attr(feature = "visitor", visit(with = "visit_relation"))]
+        name: ObjectName,
+    },
     /// ```sql
     /// SHOW <variable>
     /// ```
     ///
     /// Note: this is a PostgreSQL-specific statement.
-    ShowVariable { variable: Vec<Ident> },
+    ShowVariable {
+        variable: Vec<Ident>,
+    },
     /// ```sql
     /// SHOW [GLOBAL | SESSION] STATUS [LIKE 'pattern' | WHERE expr]
     /// ```
@@ -3061,7 +3083,9 @@ pub enum Statement {
     /// ```
     ///
     /// Note: this is a MySQL-specific statement.
-    ShowCollation { filter: Option<ShowStatementFilter> },
+    ShowCollation {
+        filter: Option<ShowStatementFilter>,
+    },
     /// ```sql
     /// `USE ...`
     /// ```
@@ -3171,6 +3195,9 @@ pub enum Statement {
     /// 2. [Postgres](https://www.postgresql.org/docs/15/sql-createfunction.html)
     /// 3. [BigQuery](https://cloud.google.com/bigquery/docs/reference/standard-sql/data-definition-language#create_function_statement)
     CreateFunction(CreateFunction),
+    CreateFunctionWith {
+        options: Vec<SqlOption>,
+    },
     /// CREATE TRIGGER
     ///
     /// Examples:
@@ -3330,7 +3357,10 @@ pub enum Statement {
     /// ```
     ///
     /// Note: this is a PostgreSQL-specific statement.
-    Deallocate { name: Ident, prepare: bool },
+    Deallocate {
+        name: Ident,
+        prepare: bool,
+    },
     /// ```sql
     /// An `EXECUTE` statement
     /// ```
@@ -3416,11 +3446,15 @@ pub enum Statement {
     /// SAVEPOINT
     /// ```
     /// Define a new savepoint within the current transaction
-    Savepoint { name: Ident },
+    Savepoint {
+        name: Ident,
+    },
     /// ```sql
     /// RELEASE [ SAVEPOINT ] savepoint_name
     /// ```
-    ReleaseSavepoint { name: Ident },
+    ReleaseSavepoint {
+        name: Ident,
+    },
     /// A `MERGE` statement.
     ///
     /// ```sql
@@ -3500,7 +3534,9 @@ pub enum Statement {
     /// LOCK TABLES <table_name> [READ [LOCAL] | [LOW_PRIORITY] WRITE]
     /// ```
     /// Note: this is a MySQL-specific statement. See <https://dev.mysql.com/doc/refman/8.0/en/lock-tables.html>
-    LockTables { tables: Vec<LockTable> },
+    LockTables {
+        tables: Vec<LockTable>,
+    },
     /// ```sql
     /// UNLOCK TABLES
     /// ```
@@ -3534,14 +3570,18 @@ pub enum Statement {
     /// listen for a notification channel
     ///
     /// See Postgres <https://www.postgresql.org/docs/current/sql-listen.html>
-    LISTEN { channel: Ident },
+    LISTEN {
+        channel: Ident,
+    },
     /// ```sql
     /// UNLISTEN
     /// ```
     /// stop listening for a notification
     ///
     /// See Postgres <https://www.postgresql.org/docs/current/sql-unlisten.html>
-    UNLISTEN { channel: Ident },
+    UNLISTEN {
+        channel: Ident,
+    },
     /// ```sql
     /// NOTIFY channel [ , payload ]
     /// ```
@@ -4004,6 +4044,13 @@ impl fmt::Display for Statement {
                 Ok(())
             }
             Statement::CreateFunction(create_function) => create_function.fmt(f),
+            Statement::CreateFunctionWith { options } => {
+                write!(
+                    f,
+                    "CREATE FUNCTION WITH ({})",
+                    display_comma_separated(options)
+                )
+            }
             Statement::CreateTrigger {
                 or_replace,
                 is_constraint,
@@ -4835,6 +4882,8 @@ impl fmt::Display for Statement {
                 }
                 Ok(())
             }
+            Statement::StartFunction { name } => write!(f, "START FUNCTION {name}"),
+            Statement::StopFunction { name } => write!(f, "STOP FUNCTION {name}"),
             Statement::Use(use_expr) => use_expr.fmt(f),
             Statement::ShowCollation { filter } => {
                 write!(f, "SHOW COLLATION")?;

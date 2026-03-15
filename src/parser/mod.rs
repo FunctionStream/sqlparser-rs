@@ -564,7 +564,15 @@ impl<'a> Parser<'a> {
                 Keyword::USE => self.parse_use(),
                 Keyword::GRANT => self.parse_grant(),
                 Keyword::REVOKE => self.parse_revoke(),
-                Keyword::START => self.parse_start_transaction(),
+                Keyword::START => {
+                    if dialect_of!(self is FunctionStreamDialect)
+                        && self.parse_keyword(Keyword::FUNCTION)
+                    {
+                        self.parse_start_function()
+                    } else {
+                        self.parse_start_transaction()
+                    }
+                }
                 // `BEGIN` is a nonstandard but common alias for the
                 // standard `START TRANSACTION` statement. It is supported
                 // by at least PostgreSQL and MySQL.
@@ -573,6 +581,13 @@ impl<'a> Parser<'a> {
                 // standard `COMMIT TRANSACTION` statement. It is supported
                 // by PostgreSQL.
                 Keyword::END => self.parse_end(),
+                Keyword::STOP if dialect_of!(self is FunctionStreamDialect) => {
+                    if self.parse_keyword(Keyword::FUNCTION) {
+                        self.parse_stop_function()
+                    } else {
+                        self.expected("FUNCTION after STOP", self.peek_token())
+                    }
+                }
                 Keyword::SAVEPOINT => self.parse_savepoint(),
                 Keyword::RELEASE => self.parse_release(),
                 Keyword::COMMIT => self.parse_commit(),
@@ -1393,7 +1408,7 @@ impl<'a> Parser<'a> {
             | tok @ Token::PGCubeRoot
             | tok @ Token::AtSign
             | tok @ Token::Tilde
-                if dialect_is!(dialect is PostgreSqlDialect) =>
+                if dialect_is!(dialect is PostgreSqlDialect | FunctionStreamDialect) =>
             {
                 let op = match tok {
                     Token::DoubleExclamationMark => UnaryOperator::PGPrefixFactorial,
@@ -1437,7 +1452,7 @@ impl<'a> Parser<'a> {
                     ),
                 })
             }
-            Token::EscapedStringLiteral(_) if dialect_is!(dialect is PostgreSqlDialect | GenericDialect) =>
+            Token::EscapedStringLiteral(_) if dialect_is!(dialect is PostgreSqlDialect | GenericDialect | FunctionStreamDialect) =>
             {
                 self.prev_token();
                 Ok(Expr::Value(self.parse_value()?))
@@ -3103,7 +3118,7 @@ impl<'a> Parser<'a> {
             Token::Caret => {
                 // In PostgreSQL, ^ stands for the exponentiation operation,
                 // and # stands for XOR. See https://www.postgresql.org/docs/current/functions-math.html
-                if dialect_is!(dialect is PostgreSqlDialect) {
+                if dialect_is!(dialect is PostgreSqlDialect | FunctionStreamDialect) {
                     Some(BinaryOperator::PGExp)
                 } else {
                     Some(BinaryOperator::BitwiseXor)
@@ -3114,22 +3129,22 @@ impl<'a> Parser<'a> {
             Token::DuckIntDiv if dialect_is!(dialect is DuckDbDialect | GenericDialect) => {
                 Some(BinaryOperator::DuckIntegerDivide)
             }
-            Token::ShiftLeft if dialect_is!(dialect is PostgreSqlDialect | DuckDbDialect | GenericDialect | RedshiftSqlDialect) => {
+            Token::ShiftLeft if dialect_is!(dialect is PostgreSqlDialect | DuckDbDialect | FunctionStreamDialect | GenericDialect | RedshiftSqlDialect) => {
                 Some(BinaryOperator::PGBitwiseShiftLeft)
             }
-            Token::ShiftRight if dialect_is!(dialect is PostgreSqlDialect | DuckDbDialect | GenericDialect | RedshiftSqlDialect) => {
+            Token::ShiftRight if dialect_is!(dialect is PostgreSqlDialect | DuckDbDialect | FunctionStreamDialect | GenericDialect | RedshiftSqlDialect) => {
                 Some(BinaryOperator::PGBitwiseShiftRight)
             }
-            Token::Sharp if dialect_is!(dialect is PostgreSqlDialect | RedshiftSqlDialect) => {
+            Token::Sharp if dialect_is!(dialect is PostgreSqlDialect | RedshiftSqlDialect | FunctionStreamDialect) => {
                 Some(BinaryOperator::PGBitwiseXor)
             }
             Token::Overlap if dialect_is!(dialect is PostgreSqlDialect | RedshiftSqlDialect) => {
                 Some(BinaryOperator::PGOverlap)
             }
-            Token::Overlap if dialect_is!(dialect is PostgreSqlDialect | GenericDialect) => {
+            Token::Overlap if dialect_is!(dialect is PostgreSqlDialect | FunctionStreamDialect | GenericDialect) => {
                 Some(BinaryOperator::PGOverlap)
             }
-            Token::CaretAt if dialect_is!(dialect is PostgreSqlDialect | GenericDialect) => {
+            Token::CaretAt if dialect_is!(dialect is PostgreSqlDialect | FunctionStreamDialect | GenericDialect) => {
                 Some(BinaryOperator::PGStartsWith)
             }
             Token::Tilde => Some(BinaryOperator::PGRegexMatch),
@@ -4388,7 +4403,11 @@ impl<'a> Parser<'a> {
         } else if self.parse_keyword(Keyword::EXTERNAL) {
             self.parse_create_external_table(or_replace)
         } else if self.parse_keyword(Keyword::FUNCTION) {
-            self.parse_create_function(or_replace, temporary)
+            if dialect_of!(self is FunctionStreamDialect) && self.parse_keyword(Keyword::WITH) {
+                self.parse_create_function_with()
+            } else {
+                self.parse_create_function(or_replace, temporary)
+            }
         } else if self.parse_keyword(Keyword::TRIGGER) {
             self.parse_create_trigger(or_replace, false)
         } else if self.parse_keywords(&[Keyword::CONSTRAINT, Keyword::TRIGGER]) {
@@ -4698,6 +4717,13 @@ impl<'a> Parser<'a> {
             self.prev_token();
             self.expected("an object type after CREATE", self.peek_token())
         }
+    }
+
+    fn parse_create_function_with(&mut self) -> Result<Statement, ParserError> {
+        self.expect_token(&Token::LParen)?;
+        let options = self.parse_comma_separated0(Parser::parse_sql_option, Token::RParen)?;
+        self.expect_token(&Token::RParen)?;
+        Ok(Statement::CreateFunctionWith { options })
     }
 
     /// Parse `CREATE FUNCTION` for [Postgres]
@@ -6785,6 +6811,17 @@ impl<'a> Parser<'a> {
             None
         };
 
+        let functionstream_partitions = if dialect_of!(self is FunctionStreamDialect | GenericDialect)
+            && self.parse_keywords(&[Keyword::PARTITIONED, Keyword::BY])
+        {
+            self.expect_token(&Token::LParen)?;
+            let partitions = self.parse_comma_separated(Parser::parse_expr)?;
+            self.expect_token(&Token::RParen)?;
+            Some(partitions)
+        } else {
+            None
+        };
+
         let create_table_config = self.parse_optional_create_table_config()?;
 
         let default_charset = if self.parse_keywords(&[Keyword::DEFAULT, Keyword::CHARSET]) {
@@ -6866,6 +6903,7 @@ impl<'a> Parser<'a> {
             .options(create_table_config.options)
             .primary_key(primary_key)
             .strict(strict)
+            .functionstream_partitions(functionstream_partitions)
             .build())
     }
 
@@ -7084,6 +7122,17 @@ impl<'a> Parser<'a> {
             Ok(Some(ColumnOption::Null))
         } else if self.parse_keyword(Keyword::DEFAULT) {
             Ok(Some(ColumnOption::Default(self.parse_expr()?)))
+        } else if self.parse_keywords(&[Keyword::METADATA, Keyword::FROM])
+            && dialect_of!(self is FunctionStreamDialect | GenericDialect)
+        {
+            // Parse metadata field syntax: METADATA FROM 'key'
+            let next_token = self.next_token();
+            match next_token.token {
+                Token::SingleQuotedString(value, ..) => {
+                    Ok(Some(ColumnOption::MetadataField(value, next_token.span)))
+                }
+                _ => self.expected("string literal for metadata key", next_token),
+            }
         } else if dialect_of!(self is ClickHouseDialect| GenericDialect)
             && self.parse_keyword(Keyword::MATERIALIZED)
         {
@@ -7564,6 +7613,35 @@ impl<'a> Parser<'a> {
                     index_type_display,
                     opt_index_name,
                     columns,
+                }))
+            }
+            Token::Word(w)
+                if w.keyword == Keyword::WATERMARK
+                    && dialect_of!(self is FunctionStreamDialect | GenericDialect) =>
+            {
+                if let Some(name) = name {
+                    return self.expected(
+                        "WATERMARK option without constraint name",
+                        TokenWithSpan {
+                            token: Token::make_keyword(&name.to_string()),
+                            span: next_token.span,
+                        },
+                    );
+                }
+
+                self.expect_keyword(Keyword::FOR)?;
+                let column_name = self.parse_identifier()?;
+
+                // The AS keyword and expression are optional
+                let watermark_expr = if self.parse_keyword(Keyword::AS) {
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
+
+                Ok(Some(TableConstraint::Watermark {
+                    column_name,
+                    watermark_expr,
                 }))
             }
             _ => {
@@ -8793,7 +8871,7 @@ impl<'a> Parser<'a> {
             }) => Ok(value),
             Token::SingleQuotedString(s) => Ok(s),
             Token::DoubleQuotedString(s) => Ok(s),
-            Token::EscapedStringLiteral(s) if dialect_of!(self is PostgreSqlDialect | GenericDialect) => {
+            Token::EscapedStringLiteral(s) if dialect_of!(self is PostgreSqlDialect | FunctionStreamDialect | GenericDialect) => {
                 Ok(s)
             }
             Token::UnicodeStringLiteral(s) => Ok(s),
@@ -9115,7 +9193,8 @@ impl<'a> Parser<'a> {
                     let field_defs = self.parse_duckdb_struct_type_def()?;
                     Ok(DataType::Struct(field_defs, StructBracketKind::Parentheses))
                 }
-                Keyword::STRUCT if dialect_is!(dialect is BigQueryDialect | GenericDialect) => {
+                Keyword::STRUCT if dialect_is!(dialect is BigQueryDialect | FunctionStreamDialect | GenericDialect) =>
+                {
                     self.prev_token();
                     let (field_defs, _trailing_bracket) =
                         self.parse_struct_type_def(Self::parse_struct_field_def)?;
@@ -11664,7 +11743,7 @@ impl<'a> Parser<'a> {
                 }),
                 alias,
             })
-        } else if dialect_of!(self is BigQueryDialect | PostgreSqlDialect | GenericDialect)
+        } else if dialect_of!(self is BigQueryDialect | PostgreSqlDialect | FunctionStreamDialect | GenericDialect)
             && self.parse_keyword(Keyword::UNNEST)
         {
             self.expect_token(&Token::LParen)?;
@@ -12919,12 +12998,13 @@ impl<'a> Parser<'a> {
             let table = self.parse_keyword(Keyword::TABLE);
             let table_object = self.parse_table_object()?;
 
-            let table_alias =
-                if dialect_of!(self is PostgreSqlDialect) && self.parse_keyword(Keyword::AS) {
-                    Some(self.parse_identifier()?)
-                } else {
-                    None
-                };
+            let table_alias = if dialect_of!(self is PostgreSqlDialect | FunctionStreamDialect)
+                && self.parse_keyword(Keyword::AS)
+            {
+                Some(self.parse_identifier()?)
+            } else {
+                None
+            };
 
             let is_mysql = dialect_of!(self is MySqlDialect);
 
@@ -13857,6 +13937,16 @@ impl<'a> Parser<'a> {
             exception_statements: None,
             has_end_keyword: false,
         })
+    }
+
+    fn parse_start_function(&mut self) -> Result<Statement, ParserError> {
+        let name = self.parse_object_name(false)?;
+        Ok(Statement::StartFunction { name })
+    }
+
+    fn parse_stop_function(&mut self) -> Result<Statement, ParserError> {
+        let name = self.parse_object_name(false)?;
+        Ok(Statement::StopFunction { name })
     }
 
     pub fn parse_begin(&mut self) -> Result<Statement, ParserError> {

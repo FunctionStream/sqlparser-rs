@@ -112,6 +112,7 @@ pub struct CreateTableBuilder {
     pub catalog: Option<String>,
     pub catalog_sync: Option<String>,
     pub storage_serialization_policy: Option<StorageSerializationPolicy>,
+    pub functionstream_partitions: Option<Vec<Expr>>,
 }
 
 impl CreateTableBuilder {
@@ -166,6 +167,7 @@ impl CreateTableBuilder {
             catalog: None,
             catalog_sync: None,
             storage_serialization_policy: None,
+            functionstream_partitions: None,
         }
     }
     pub fn or_replace(mut self, or_replace: bool) -> Self {
@@ -415,6 +417,14 @@ impl CreateTableBuilder {
         self
     }
 
+    pub fn functionstream_partitions(
+        mut self,
+        functionstream_partitions: Option<Vec<Expr>>,
+    ) -> Self {
+        self.functionstream_partitions = functionstream_partitions;
+        self
+    }
+
     pub fn build(self) -> Statement {
         Statement::CreateTable(CreateTable {
             or_replace: self.or_replace,
@@ -466,6 +476,7 @@ impl CreateTableBuilder {
             catalog: self.catalog,
             catalog_sync: self.catalog_sync,
             storage_serialization_policy: self.storage_serialization_policy,
+            functionstream_partitions: self.functionstream_partitions,
         })
     }
 }
@@ -527,6 +538,7 @@ impl TryFrom<Statement> for CreateTableBuilder {
                 catalog,
                 catalog_sync,
                 storage_serialization_policy,
+                functionstream_partitions,
             }) => Ok(Self {
                 or_replace,
                 temporary,
@@ -577,6 +589,7 @@ impl TryFrom<Statement> for CreateTableBuilder {
                 catalog,
                 catalog_sync,
                 storage_serialization_policy,
+                functionstream_partitions,
             }),
             _ => Err(ParserError::ParserError(format!(
                 "Expected create table statement, but received: {stmt}"

@@ -450,6 +450,8 @@ impl Spanned for Statement {
             Statement::SetNames { .. } => Span::empty(),
             Statement::SetNamesDefault {} => Span::empty(),
             Statement::ShowFunctions { .. } => Span::empty(),
+            Statement::StartFunction { .. } => Span::empty(),
+            Statement::StopFunction { .. } => Span::empty(),
             Statement::ShowVariable { .. } => Span::empty(),
             Statement::ShowStatus { .. } => Span::empty(),
             Statement::ShowVariables { .. } => Span::empty(),
@@ -466,6 +468,7 @@ impl Spanned for Statement {
             Statement::CreateSchema { .. } => Span::empty(),
             Statement::CreateDatabase { .. } => Span::empty(),
             Statement::CreateFunction { .. } => Span::empty(),
+            Statement::CreateFunctionWith { .. } => Span::empty(),
             Statement::CreateTrigger { .. } => Span::empty(),
             Statement::DropTrigger { .. } => Span::empty(),
             Statement::CreateProcedure { .. } => Span::empty(),
@@ -585,6 +588,7 @@ impl Spanned for CreateTable {
             catalog: _,                         // todo, Snowflake specific
             catalog_sync: _,                    // todo, Snowflake specific
             storage_serialization_policy: _,    // todo, Snowflake specific
+            functionstream_partitions: _,       // todo, FunctionStream specific
         } = self;
 
         union_spans(
@@ -695,6 +699,15 @@ impl Spanned for TableConstraint {
                     .map(|i| i.span)
                     .chain(columns.iter().map(|i| i.span)),
             ),
+            TableConstraint::Watermark {
+                column_name,
+                watermark_expr,
+            } => union_spans(
+                watermark_expr
+                    .iter()
+                    .map(|e| e.span())
+                    .chain(core::iter::once(column_name.span)),
+            ),
         }
     }
 }
@@ -772,6 +785,7 @@ impl Spanned for ColumnOption {
             ColumnOption::OnConflict(..) => Span::empty(),
             ColumnOption::Policy(..) => Span::empty(),
             ColumnOption::Tags(..) => Span::empty(),
+            ColumnOption::MetadataField(_, span) => *span,
         }
     }
 }
