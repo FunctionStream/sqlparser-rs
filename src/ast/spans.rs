@@ -389,6 +389,7 @@ impl Spanned for Statement {
                     .chain(to.iter().map(|i| i.span())),
             ),
             Statement::CreateTable(create_table) => create_table.span(),
+            Statement::CreateStreamingTable { name, query, .. } => name.span().union(&query.span()),
             Statement::CreateVirtualTable {
                 name,
                 if_not_exists: _,
@@ -588,7 +589,7 @@ impl Spanned for CreateTable {
             catalog: _,                         // todo, Snowflake specific
             catalog_sync: _,                    // todo, Snowflake specific
             storage_serialization_policy: _,    // todo, Snowflake specific
-            functionstream_partitions: _,       // todo, FunctionStream specific
+            arroyo_partitions: _,               // todo, FunctionStream specific
         } = self;
 
         union_spans(

@@ -4393,7 +4393,11 @@ impl<'a> Parser<'a> {
         let persistent = dialect_of!(self is DuckDbDialect)
             && self.parse_one_of_keywords(&[Keyword::PERSISTENT]).is_some();
         let create_view_params = self.parse_create_view_params()?;
-        if self.parse_keyword(Keyword::TABLE) {
+        if dialect_of!(self is FunctionStreamDialect)
+            && self.parse_keywords(&[Keyword::STREAMING, Keyword::TABLE])
+        {
+            self.parse_create_streaming_table()
+        } else if self.parse_keyword(Keyword::TABLE) {
             self.parse_create_table(or_replace, temporary, global, transient)
         } else if self.parse_keyword(Keyword::MATERIALIZED) || self.parse_keyword(Keyword::VIEW) {
             self.prev_token();
@@ -4724,6 +4728,30 @@ impl<'a> Parser<'a> {
         let options = self.parse_comma_separated0(Parser::parse_sql_option, Token::RParen)?;
         self.expect_token(&Token::RParen)?;
         Ok(Statement::CreateFunctionWith { options })
+    }
+
+    fn parse_create_streaming_table(&mut self) -> Result<Statement, ParserError> {
+        let name = self.parse_object_name(false)?;
+        let with_options = self.parse_options(Keyword::WITH)?;
+        let comment = if self.parse_keyword(Keyword::COMMENT) {
+            let next_token = self.next_token();
+            match &next_token.token {
+                Token::SingleQuotedString(s) => Some(s.clone()),
+                Token::DoubleQuotedString(s) => Some(s.clone()),
+                Token::Word(w) => Some(w.value.clone()),
+                _ => return self.expected("string literal after COMMENT", next_token),
+            }
+        } else {
+            None
+        };
+        self.expect_keyword_is(Keyword::AS)?;
+        let query = self.parse_query()?;
+        Ok(Statement::CreateStreamingTable {
+            name,
+            with_options,
+            comment,
+            query,
+        })
     }
 
     /// Parse `CREATE FUNCTION` for [Postgres]
@@ -6811,7 +6839,7 @@ impl<'a> Parser<'a> {
             None
         };
 
-        let functionstream_partitions = if dialect_of!(self is FunctionStreamDialect | GenericDialect)
+        let arroyo_partitions = if dialect_of!(self is FunctionStreamDialect | GenericDialect)
             && self.parse_keywords(&[Keyword::PARTITIONED, Keyword::BY])
         {
             self.expect_token(&Token::LParen)?;
@@ -6903,7 +6931,7 @@ impl<'a> Parser<'a> {
             .options(create_table_config.options)
             .primary_key(primary_key)
             .strict(strict)
-            .functionstream_partitions(functionstream_partitions)
+            .arroyo_partitions(arroyo_partitions)
             .build())
     }
 

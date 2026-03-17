@@ -143,9 +143,9 @@ fn test_iceberg_partitioned_by() {
     assert_eq!(ct.columns.len(), 3);
 
     let partitions = ct
-        .functionstream_partitions
+        .arroyo_partitions
         .as_ref()
-        .expect("Expected functionstream_partitions to be Some");
+        .expect("Expected arroyo_partitions to be Some");
     assert_eq!(partitions.len(), 3);
 
     // Check each partition transform
@@ -195,7 +195,7 @@ fn test_iceberg_partitioned_by() {
         panic!("not create table on reparse")
     };
 
-    assert_eq!(ct.functionstream_partitions, ct2.functionstream_partitions);
+    assert_eq!(ct.arroyo_partitions, ct2.arroyo_partitions);
 }
 
 #[test]
@@ -212,9 +212,9 @@ fn test_iceberg_partitioned_by_single() {
     };
 
     let partitions = ct
-        .functionstream_partitions
+        .arroyo_partitions
         .as_ref()
-        .expect("Expected functionstream_partitions");
+        .expect("Expected arroyo_partitions");
     assert_eq!(partitions.len(), 1);
 
     match &partitions[0] {
@@ -241,9 +241,9 @@ fn test_iceberg_partitioned_by_identity() {
     };
 
     let partitions = ct
-        .functionstream_partitions
+        .arroyo_partitions
         .as_ref()
-        .expect("Expected functionstream_partitions");
+        .expect("Expected arroyo_partitions");
     assert_eq!(partitions.len(), 1);
 
     match &partitions[0] {
@@ -329,4 +329,140 @@ fn test_show_functions_case_insensitive() {
             panic!("expected ShowFunctions for {:?}, got {:?}", sql, stmts[0]);
         };
     }
+}
+
+#[test]
+fn test_create_streaming_table() {
+    let sql = r#"CREATE STREAMING TABLE error_logs_pipeline
+WITH (
+    'parallelism' = '4',
+    'checkpoint_interval' = '10s',
+    'connector' = 'kafka',
+    'kafka.topic' = 'errors_topic',
+    'kafka.broker' = 'localhost:9092'
+)
+COMMENT "Extracts error level logs and routes to Kafka"
+AS
+SELECT
+    hop_start(event_time, interval '1' minute, interval '5' minute) as window_start,
+    device_id,
+    count(*) as error_count
+FROM raw_stream
+WHERE level = 'ERROR'
+GROUP BY 1, 2"#;
+    let stmts = Parser::parse_sql(&FunctionStreamDialect {}, sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+    let Statement::CreateStreamingTable {
+        name,
+        with_options,
+        comment,
+        query,
+    } = &stmts[0]
+    else {
+        panic!("expected CreateStreamingTable, got {:?}", stmts[0]);
+    };
+    assert_eq!(name.to_string(), "error_logs_pipeline");
+    assert_eq!(with_options.len(), 5);
+    assert_eq!(
+        comment.as_deref(),
+        Some("Extracts error level logs and routes to Kafka")
+    );
+    assert!(matches!(*query.body, sqlparser::ast::SetExpr::Select(_)));
+}
+
+#[test]
+fn test_create_streaming_table_minimal() {
+    let sql = "CREATE STREAMING TABLE t AS SELECT 1";
+    let stmts = Parser::parse_sql(&FunctionStreamDialect {}, sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+    let Statement::CreateStreamingTable {
+        name,
+        with_options,
+        comment,
+        query,
+    } = &stmts[0]
+    else {
+        panic!("expected CreateStreamingTable, got {:?}", stmts[0]);
+    };
+    assert_eq!(name.to_string(), "t");
+    assert!(with_options.is_empty());
+    assert!(comment.is_none());
+    assert!(matches!(*query.body, sqlparser::ast::SetExpr::Select(_)));
+}
+
+#[test]
+fn test_create_streaming_table_with_only() {
+    let sql = "CREATE STREAMING TABLE sink_t WITH ('connector' = 'kafka', 'topic' = 'out') AS SELECT * FROM src";
+    let stmts = Parser::parse_sql(&FunctionStreamDialect {}, sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+    let Statement::CreateStreamingTable {
+        name,
+        with_options,
+        comment,
+        ..
+    } = &stmts[0]
+    else {
+        panic!("expected CreateStreamingTable, got {:?}", stmts[0]);
+    };
+    assert_eq!(name.to_string(), "sink_t");
+    assert_eq!(with_options.len(), 2);
+    assert!(comment.is_none());
+}
+
+#[test]
+fn test_create_streaming_table_comment_single_quoted() {
+    let sql = "CREATE STREAMING TABLE t COMMENT 'single quoted comment' AS SELECT 1 as x";
+    let stmts = Parser::parse_sql(&FunctionStreamDialect {}, sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+    let Statement::CreateStreamingTable { name, comment, .. } = &stmts[0] else {
+        panic!("expected CreateStreamingTable, got {:?}", stmts[0]);
+    };
+    assert_eq!(name.to_string(), "t");
+    assert_eq!(comment.as_deref(), Some("single quoted comment"));
+}
+
+#[test]
+fn test_create_streaming_table_roundtrip() {
+    let sql =
+        "CREATE STREAMING TABLE my_pipeline WITH ('a' = '1') COMMENT 'desc' AS SELECT id FROM t";
+    let stmts = Parser::parse_sql(&FunctionStreamDialect {}, sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+    let formatted = stmts[0].to_string();
+    let reparsed = Parser::parse_sql(&FunctionStreamDialect {}, &formatted).unwrap();
+    assert_eq!(reparsed.len(), 1);
+    let Statement::CreateStreamingTable {
+        name: n2,
+        with_options: w2,
+        comment: c2,
+        ..
+    } = &reparsed[0]
+    else {
+        panic!(
+            "expected CreateStreamingTable on reparse, got {:?}",
+            reparsed[0]
+        );
+    };
+    let Statement::CreateStreamingTable {
+        name: n1,
+        with_options: w1,
+        comment: c1,
+        ..
+    } = &stmts[0]
+    else {
+        panic!("unreachable");
+    };
+    assert_eq!(n1.to_string(), n2.to_string());
+    assert_eq!(w1.len(), w2.len());
+    assert_eq!(c1, c2);
+}
+
+#[test]
+fn test_create_streaming_table_qualified_name() {
+    let sql = "CREATE STREAMING TABLE db.schema.pipeline AS SELECT 1";
+    let stmts = Parser::parse_sql(&FunctionStreamDialect {}, sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+    let Statement::CreateStreamingTable { name, .. } = &stmts[0] else {
+        panic!("expected CreateStreamingTable, got {:?}", stmts[0]);
+    };
+    assert_eq!(name.to_string(), "db.schema.pipeline");
 }

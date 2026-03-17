@@ -2589,6 +2589,13 @@ pub enum Statement {
     /// CREATE TABLE
     /// ```
     CreateTable(CreateTable),
+    CreateStreamingTable {
+        #[cfg_attr(feature = "visitor", visit(with = "visit_relation"))]
+        name: ObjectName,
+        with_options: Vec<SqlOption>,
+        comment: Option<String>,
+        query: Box<Query>,
+    },
     /// ```sql
     /// CREATE VIRTUAL TABLE .. USING <module_name> (<module_args>)`
     /// ```
@@ -4226,6 +4233,21 @@ impl fmt::Display for Statement {
                 Ok(())
             }
             Statement::CreateTable(create_table) => create_table.fmt(f),
+            Statement::CreateStreamingTable {
+                name,
+                with_options,
+                comment,
+                query,
+            } => {
+                write!(f, "CREATE STREAMING TABLE {name}")?;
+                if !with_options.is_empty() {
+                    write!(f, " WITH ({})", display_comma_separated(with_options))?;
+                }
+                if let Some(c) = comment {
+                    write!(f, " COMMENT '{}'", value::escape_single_quote_string(c))?;
+                }
+                write!(f, " AS {query}")
+            }
             Statement::LoadData {
                 local,
                 inpath,

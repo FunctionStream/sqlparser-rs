@@ -212,7 +212,7 @@ pub struct CreateTable {
     /// FunctionStream-specific: Iceberg partition transforms
     /// Syntax: PARTITIONED BY (hour(ts), bucket(32, id), truncate(8, color))
     /// <https://iceberg.apache.org/spec/#partitioning>
-    pub functionstream_partitions: Option<Vec<Expr>>,
+    pub arroyo_partitions: Option<Vec<Expr>>,
 }
 
 impl Display for CreateTable {
@@ -396,11 +396,11 @@ impl Display for CreateTable {
         if let Some(cluster_by) = self.cluster_by.as_ref() {
             write!(f, " CLUSTER BY {cluster_by}")?;
         }
-        if let Some(functionstream_partitions) = &self.functionstream_partitions {
+        if let Some(arroyo_partitions) = &self.arroyo_partitions {
             write!(
                 f,
                 " PARTITIONED BY ({})",
-                display_comma_separated(functionstream_partitions)
+                display_comma_separated(arroyo_partitions)
             )?;
         }
 
