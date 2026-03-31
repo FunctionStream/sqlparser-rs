@@ -2025,6 +2025,7 @@ pub enum ShowCreateObject {
     Event,
     Function,
     Procedure,
+    StreamingTable,
     Table,
     Trigger,
     View,
@@ -2036,6 +2037,7 @@ impl fmt::Display for ShowCreateObject {
             ShowCreateObject::Event => f.write_str("EVENT"),
             ShowCreateObject::Function => f.write_str("FUNCTION"),
             ShowCreateObject::Procedure => f.write_str("PROCEDURE"),
+            ShowCreateObject::StreamingTable => f.write_str("STREAMING TABLE"),
             ShowCreateObject::Table => f.write_str("TABLE"),
             ShowCreateObject::Trigger => f.write_str("TRIGGER"),
             ShowCreateObject::View => f.write_str("VIEW"),
@@ -3077,6 +3079,10 @@ pub enum Statement {
         external: bool,
         show_options: ShowStatementOptions,
     },
+    /// ```sql
+    /// SHOW STREAMING TABLE
+    /// ```
+    ShowStreamingTable,
     /// ```sql
     /// SHOW VIEWS
     /// ```
@@ -4882,6 +4888,10 @@ impl fmt::Display for Statement {
                     external = if *external { "EXTERNAL " } else { "" },
                     history = if *history { " HISTORY" } else { "" },
                 )?;
+                Ok(())
+            }
+            Statement::ShowStreamingTable => {
+                write!(f, "SHOW STREAMING TABLE")?;
                 Ok(())
             }
             Statement::ShowViews {
@@ -6732,6 +6742,7 @@ impl fmt::Display for HavingBoundKind {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum ObjectType {
+    StreamingTable,
     Table,
     View,
     Index,
@@ -6746,6 +6757,7 @@ pub enum ObjectType {
 impl fmt::Display for ObjectType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(match self {
+            ObjectType::StreamingTable => "STREAMING TABLE",
             ObjectType::Table => "TABLE",
             ObjectType::View => "VIEW",
             ObjectType::Index => "INDEX",

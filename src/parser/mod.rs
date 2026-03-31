@@ -5843,7 +5843,9 @@ impl<'a> Parser<'a> {
         let persistent = dialect_of!(self is DuckDbDialect)
             && self.parse_one_of_keywords(&[Keyword::PERSISTENT]).is_some();
 
-        let object_type = if self.parse_keyword(Keyword::TABLE) {
+        let object_type = if self.parse_keywords(&[Keyword::STREAMING, Keyword::TABLE]) {
+            ObjectType::StreamingTable
+        } else if self.parse_keyword(Keyword::TABLE) {
             ObjectType::Table
         } else if self.parse_keyword(Keyword::VIEW) {
             ObjectType::View
@@ -5877,7 +5879,7 @@ impl<'a> Parser<'a> {
             return self.parse_drop_extension();
         } else {
             return self.expected(
-                "CONNECTOR, DATABASE, EXTENSION, FUNCTION, INDEX, POLICY, PROCEDURE, ROLE, SCHEMA, SECRET, SEQUENCE, STAGE, TABLE, TRIGGER, TYPE, or VIEW after DROP",
+                "CONNECTOR, DATABASE, EXTENSION, FUNCTION, INDEX, POLICY, PROCEDURE, ROLE, SCHEMA, SECRET, SEQUENCE, STAGE, STREAMING TABLE, TABLE, TRIGGER, TYPE, or VIEW after DROP",
                 self.peek_token(),
             );
         };
@@ -11238,6 +11240,14 @@ impl<'a> Parser<'a> {
             .is_some()
         {
             Ok(self.parse_show_columns(extended, full)?)
+        } else if self.parse_keyword(Keyword::STREAMING) {
+            if self.parse_keyword(Keyword::TABLE)
+                || self.parse_one_of_keywords(&[Keyword::TABLES]).is_some()
+            {
+                Ok(Statement::ShowStreamingTable)
+            } else {
+                self.expected("TABLE or TABLES after SHOW STREAMING", self.peek_token())
+            }
         } else if self.parse_keyword(Keyword::TABLES) {
             Ok(self.parse_show_tables(terse, extended, full, external)?)
         } else if self.parse_keywords(&[Keyword::MATERIALIZED, Keyword::VIEWS]) {
@@ -11303,6 +11313,7 @@ impl<'a> Parser<'a> {
 
     pub fn parse_show_create(&mut self) -> Result<Statement, ParserError> {
         let obj_type = match self.expect_one_of_keywords(&[
+            Keyword::STREAMING,
             Keyword::TABLE,
             Keyword::TRIGGER,
             Keyword::FUNCTION,
@@ -11310,6 +11321,10 @@ impl<'a> Parser<'a> {
             Keyword::EVENT,
             Keyword::VIEW,
         ])? {
+            Keyword::STREAMING => {
+                self.expect_keyword_is(Keyword::TABLE)?;
+                Ok(ShowCreateObject::StreamingTable)
+            }
             Keyword::TABLE => Ok(ShowCreateObject::Table),
             Keyword::TRIGGER => Ok(ShowCreateObject::Trigger),
             Keyword::FUNCTION => Ok(ShowCreateObject::Function),

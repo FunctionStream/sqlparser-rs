@@ -12,7 +12,10 @@
 
 #![warn(clippy::all)]
 
-use sqlparser::ast::{BinaryOperator, ColumnOption, Expr, Ident, Statement, TableConstraint};
+use sqlparser::ast::{
+    BinaryOperator, ColumnOption, Expr, Ident, ObjectType, ShowCreateObject, Statement,
+    TableConstraint,
+};
 use sqlparser::dialect::FunctionStreamDialect;
 use sqlparser::parser::Parser;
 use sqlparser::test_utils;
@@ -465,4 +468,50 @@ fn test_create_streaming_table_qualified_name() {
         panic!("expected CreateStreamingTable, got {:?}", stmts[0]);
     };
     assert_eq!(name.to_string(), "db.schema.pipeline");
+}
+
+#[test]
+fn test_show_create_streaming_table() {
+    let sql = "SHOW CREATE STREAMING TABLE my_pipeline";
+    let stmts = Parser::parse_sql(&FunctionStreamDialect {}, sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+    let Statement::ShowCreate { obj_type, obj_name } = &stmts[0] else {
+        panic!("expected ShowCreate, got {:?}", stmts[0]);
+    };
+    assert_eq!(*obj_type, ShowCreateObject::StreamingTable);
+    assert_eq!(obj_name.to_string(), "my_pipeline");
+    assert_eq!(stmts[0].to_string(), "SHOW CREATE STREAMING TABLE my_pipeline");
+}
+
+#[test]
+fn test_show_streaming_table() {
+    for sql in ["SHOW STREAMING TABLE", "SHOW STREAMING TABLES"] {
+        let stmts = Parser::parse_sql(&FunctionStreamDialect {}, sql).unwrap();
+        assert_eq!(stmts.len(), 1, "failed for {:?}", sql);
+        let Statement::ShowStreamingTable = &stmts[0] else {
+            panic!("expected ShowStreamingTable, got {:?}", stmts[0]);
+        };
+        assert_eq!(stmts[0].to_string(), "SHOW STREAMING TABLE");
+    }
+}
+
+#[test]
+fn test_drop_streaming_table() {
+    let sql = "DROP STREAMING TABLE my_pipeline";
+    let stmts = Parser::parse_sql(&FunctionStreamDialect {}, sql).unwrap();
+    assert_eq!(stmts.len(), 1);
+    let Statement::Drop {
+        object_type,
+        names,
+        if_exists,
+        ..
+    } = &stmts[0]
+    else {
+        panic!("expected Drop, got {:?}", stmts[0]);
+    };
+    assert_eq!(*object_type, ObjectType::StreamingTable);
+    assert!(!if_exists);
+    assert_eq!(names.len(), 1);
+    assert_eq!(names[0].to_string(), "my_pipeline");
+    assert_eq!(stmts[0].to_string(), "DROP STREAMING TABLE my_pipeline");
 }
